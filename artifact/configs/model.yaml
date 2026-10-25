@@ -1,0 +1,27 @@
+llm:
+  provider: openai_compatible
+  base_url_env: LLM_BASE_URL
+  api_key_env: LLM_API_KEY
+  model_env: LLM_MODEL
+  default_model: Qwen/Qwen2.5-7B-Instruct
+  temperature_env: LLM_TEMPERATURE
+  max_tokens_env: LLM_MAX_TOKENS
+  default_temperature: 0
+  default_max_tokens: 2048
+
+embedding:
+  provider_env: EMBEDDING_PROVIDER
+  default_provider: sentence_transformers
+  base_url_env: EMBEDDING_BASE_URL
+  api_key_env: EMBEDDING_API_KEY
+  model_env: EMBEDDING_MODEL
+  default_model: BAAI/bge-small-en-v1.5
+  device_env: EMBEDDING_DEVICE
+  default_device: cpu
+  normalize_env: EMBEDDING_NORMALIZE
+  default_normalize: true
+  local_files_only_env: EMBEDDING_LOCAL_FILES_ONLY
+  default_local_files_only: true
+
+retrieval:
+  top_k: 5

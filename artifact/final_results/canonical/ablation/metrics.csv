@@ -1,0 +1,8 @@
+variant,n,TSR_percent,Acc_percent,Clean_percent,Unsafe_percent,ASR_percent,Leakage_percent,UAcc_percent,Revocation_percent,contamination_percent,block_percent,correct_block_percent,false_block_percent,avg_total_tokens,avg_graph_nodes,avg_graph_edges
+Full,2700,94.96,72.7,90.22,1.52,0.0,0.0,0.0,0.0,25.0,24.0,54.21,3.12,4814.9,39.74,246.78
+Compressed graph,2700,94.33,71.93,89.22,1.56,0.0,0.0,0.0,0.0,25.02,23.78,53.77,3.02,4847.0,24.66,70.68
+No action gate,2700,69.44,42.63,90.0,27.0,34.89,22.22,0.0,35.11,25.0,14.41,17.54,2.5,4830.1,39.74,246.69
+No containment,2700,70.67,43.15,89.22,25.41,32.89,20.89,0.0,39.78,25.0,14.81,18.33,2.5,4814.2,39.68,245.96
+No permission filter,2700,96.0,78.63,89.44,0.04,0.22,0.0,100.0,0.0,24.94,25.74,58.86,2.4,4911.9,39.76,250.73
+No provenance graph,2700,67.89,41.89,89.0,27.89,29.33,22.89,100.0,46.67,40.44,14.22,16.4,3.02,4991.2,0.0,0.0
+No trust propagation,2700,87.37,56.44,88.78,8.56,0.0,0.0,0.0,0.0,25.0,11.15,24.12,2.71,4886.3,39.91,265.1

@@ -1,0 +1,21 @@
+{
+  "main": {
+    "B0_B1_B2_B3_MAPGraph": "outputs_final_paper",
+    "B4_B5_B6": "outputs_qwen_repro_current_full"
+  },
+  "ablation": "outputs_final_paper_ablation",
+  "backbone": {
+    "Qwen2.5-7B-Instruct": "stratified extraction from the final full runs",
+    "GLM-4-9B-0414": "outputs_backbone_glm4_9b",
+    "Llama-3.1-8B-Instruct": "outputs_backbone_llama31_8b_openrouter"
+  },
+  "method_alias": {
+    "B6": "FlatProvenance"
+  },
+  "task_counts": {
+    "main_per_method": 2700,
+    "main_total": 21600,
+    "ablation_per_variant": 2700,
+    "backbone_per_method": 540
+  }
+}

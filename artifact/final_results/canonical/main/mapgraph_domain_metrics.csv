@@ -1,0 +1,4 @@
+method,domain,n,TSR_percent,Acc_percent
+MAPGraph,corporate_workflow,900,94.56,73.56
+MAPGraph,research_assistant,900,95.33,70.0
+MAPGraph,software_engineering,900,95.0,74.56

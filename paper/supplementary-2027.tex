@@ -1,0 +1,623 @@
+% Supplementary material for the MAP-Graph submission.
+% Uploaded as a separate document; not part of the main-paper page limit.
+\documentclass[letterpaper]{article} % DO NOT CHANGE THIS
+\usepackage[submission]{aaai2027} % DO NOT CHANGE THIS
+\usepackage[hyphens]{url} % DO NOT CHANGE THIS
+\usepackage{graphicx} % DO NOT CHANGE THIS
+\urlstyle{rm} % DO NOT CHANGE THIS
+\def\UrlFont{\rm} % DO NOT CHANGE THIS
+\usepackage{natbib} % DO NOT CHANGE THIS AND DO NOT ADD ANY OPTIONS TO IT
+\usepackage{caption} % DO NOT CHANGE THIS AND DO NOT ADD ANY OPTIONS TO IT
+\frenchspacing % DO NOT CHANGE THIS
+\DeclareCaptionStyle{ruled}{labelfont=normalfont,labelsep=colon,strut=off} % DO NOT CHANGE THIS
+
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{dblfloatfix}
+
+\pdfinfo{
+/TemplateVersion (2027.1)
+}
+
+\setcounter{secnumdepth}{2}
+
+\title{MAP-Graph: Supplementary Material}
+\author{Anonymous Submission}
+\affiliations{}
+
+\begin{document}
+
+\maketitle
+\appendix
+
+\section*{Organization and Relation to the Main Paper}
+
+This document supplies implementation and evaluation details omitted from the
+main paper for space.  Throughout, C1, C2, and C3 denote the main paper's
+challenges of recursive ancestry, heterogeneous constraints, and
+action-dependent admissibility.  Symbols ($S$, $I$, $F$, $P$, $V$, $A$,
+$\rho$, and $\theta$) and the decision vocabulary
+(\textsc{Allow}, \textsc{Block}, \textsc{Reverify}, \textsc{Redact}, and
+\textsc{AskUser}) follow the main paper.
+
+\begin{table}[!ht]
+\centering
+\small
+\caption{Correspondence between the supplementary sections and the main paper.}
+\label{tab:appendix-map}
+\begin{tabular}{@{}p{0.14\linewidth}p{0.58\linewidth}p{0.18\linewidth}@{}}
+\toprule
+Section & Main-paper material supported & Challenge \\
+\midrule
+A & Graph schema and path-trust constants & C1 \\
+B & Backend interface, workflow integration, and operation semantics & C1, C3 \\
+C & Benchmark construction, sanitization, and transfer subset & C1--C3 \\
+D & Exact baseline adaptations and the flat-metadata control & C2 \\
+E & Metric formulas and implementation settings & C1--C3 \\
+F & Scenario, domain, diagnostic, ablation, and transfer results & C1--C3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Provenance Graph Schema}
+\label{app:schema}
+
+The main paper's graph-schema subsection states that MAP-Graph evaluates
+recorded ancestry rather than only a memory's text or local score.  This
+section specifies the serialized vocabulary and the constants used by the
+implemented path-trust calculation.
+
+\begin{table*}[!t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\caption{Registered node and edge types emitted by the graph builder.}
+\label{tab:mapgraph-schema}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.22\linewidth}
+>{\raggedright\arraybackslash}p{0.72\linewidth}@{}}
+\toprule
+Type & Implemented meaning \\
+\midrule
+\multicolumn{2}{@{}l@{}}{\textbf{Node types}} \\
+User & Owner or authorizer associated with a resource or memory. \\
+Agent & Workflow role that observes, writes, retrieves, or proposes an action. \\
+Tool & Tool identity associated with an observed output or verification. \\
+Resource & Source document or referenced artifact with trust and access metadata. \\
+Message & Observable inter-agent content; the graph stores its content hash. \\
+Memory & Seeded, observed, or agent-written record stored in Chroma. \\
+Claim & Up to three sentence-level claims extracted by deterministic text rules. \\
+Action & Proposed action, risk, threshold, support, and gate decision. \\
+\midrule
+\multicolumn{2}{@{}l@{}}{\textbf{Edge types}} \\
+\texttt{authorized\_by} & Associates a resource, memory, or action with an owner or actor. \\
+\texttt{observed\_from} & Records an agent observing a resource. \\
+\texttt{forwarded\_to} & Records the receivers of an inter-agent message. \\
+\texttt{derived\_from} & Links a message, memory, or claim to recorded inputs. \\
+\texttt{summarized\_from} & Special derivation edge for a benchmark summary-memory event. \\
+\texttt{written\_by} & Associates a memory or claim with its writing agent. \\
+\texttt{read\_by} & Records a selected memory read and its retrieval scores. \\
+\texttt{verified\_by} & Records a high-trust source or rule-based verifier. \\
+\texttt{invalidated\_by} & Records an explicit revocation or invalidating reference. \\
+\texttt{used\_for\_action} & Links a supporting memory or claim to an action. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Task identifier, domain, step, visibility, permission scope, trust labels, and
+risk tags are attributes rather than node types.  Tool outputs are represented
+as Memory nodes associated with a Tool identity; an unregistered output
+identifier may additionally appear as a \texttt{Resource:<id>} reference
+placeholder.  MAP-Graph is therefore an execution-lineage graph, not a
+general-purpose semantic knowledge graph.  The implementation does not create
+generic \texttt{Contradicts}, \texttt{Updates}, or temporal-order edges and
+does not perform open-domain contradiction resolution.
+
+\subsection{Path-Trust Constants}
+\label{app:trust-constants}
+
+For an eligible memory, the implementation computes
+\[
+\rho(m,a)=\operatorname{clip}_{[0,1]}(S\,I\,F\,P\,V\,A).
+\]
+Source trust $S$ is the minimum explicit trust among source ancestors, or
+$0.80$ if no source ancestor is recorded.  Path integrity $I$ starts at $1$
+and is multiplied once by $0.25$, $0.45$, and $0.15$ when the ancestry
+contains, respectively, an untrusted/poisoned, private/sensitive, or revoked
+category.  Multiple categories compound.  Transformation loss adds $0.08$
+for an agent-message record, $0.10$ for a summary event, and $0.03$ for each
+non-root memory transformation, capped at $0.65$; hence
+$F=\max(0.35,1-\mathrm{loss})$.  Permission validity $P$ is the current binary
+\texttt{CanRead} result.  The verification factor is
+$V=\min(1.20,1+0.05n_v)$ for $n_v$ high-trust ancestors.  Writer reliability
+$A$ defaults to $0.95$.
+
+The factors use different evidence: $S$, $I$, and $V$ summarize recorded
+ancestry; $F$ follows the transformation chain; $P$ evaluates the current
+reader against the stored policy; and $A$ belongs to the writing agent.
+Permission is still enforced as a hard pre-ranking filter in the full system.
+The graded product only reranks records that remain eligible, and affected
+ancestry is reconsidered by the action gate.
+
+\section{Backend Interface and Memory Operations}
+\label{app:operations}
+
+MAP-Graph is implemented as a task-local memory backend between the shared
+agent workflow and its simulated proposed action.  Table~\ref{tab:operations}
+summarizes the public operations.
+
+\begin{table}[!ht]
+\centering
+\small
+\caption{Implemented MAP-Graph memory operations.}
+\label{tab:operations}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.22\linewidth}
+>{\raggedright\arraybackslash}p{0.28\linewidth}
+>{\raggedright\arraybackslash}p{0.40\linewidth}@{}}
+\toprule
+Operation & Input & Effect \\
+\midrule
+Observe/write & Source, tool output, or agent text & Creates a distinct memory, embedding, scope, and lineage links. \\
+Retrieve & Agent and query & Filters permissions and returns at most five records ranked by semantic score times path trust. \\
+Revoke & Explicit timeline event & Marks a source revoked, clears its scope, and updates directly referenced or already affected records. \\
+Decide & Proposed action and support & Applies affected-path rules and a risk-dependent trust threshold. \\
+Export & Completed task & Serializes nodes, edges, retrieval diagnostics, gate events, and component settings. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Workflow Integration}
+\label{app:workflow-integration}
+
+The harness uses AutoGen's OpenAI-compatible model client and executes the four
+task-provided roles once in fixed order.  It does not instantiate AutoGen
+\texttt{AssistantAgent} or \texttt{RoundRobinGroupChat}.  At each role step,
+the harness applies scheduled timeline events, registers sources and tool
+outputs visible to that role, filters the visible conversation through the
+selected backend, retrieves memory, calls the model, and writes the response.
+The final role emits a structured proposed-action object, which is passed to
+the backend.
+
+The final decision is conservative with respect to the agent proposal and
+backend decision.  A restrictive backend result is never relaxed; if the
+backend returns \textsc{Allow} but the agent proposes \textsc{Block},
+\textsc{Redact}, \textsc{Reverify}, or \textsc{AskUser}, the more restrictive
+agent proposal remains.  Only final \textsc{Allow} creates a simulated
+execution event, and no external side effect is performed.
+
+\subsection{Write, Retrieval, Update, and Audit Semantics}
+\label{app:operation-details}
+
+\paragraph{Write.}
+Empty text is rejected; otherwise a new record is created without content
+deduplication.  Its \texttt{derived\_from} list combines retrieved-memory
+identifiers with sources visible at the current step.  With the full graph
+builder, a Message reference is also recorded.  A derived record receives the
+intersection of referenced scopes.  If no referenced scope exists, all task
+agents are eligible; if the intersection is empty, the scope falls back to the
+writing agent.  Visibility is shared only when the resulting scope covers all
+task agents.
+
+\paragraph{Retrieval.}
+Chroma first supplies semantic candidates.  MAP-Graph computes
+\texttt{CanRead} and path trust for each candidate, removes
+permission-ineligible records, sorts the remainder by semantic score times
+path trust, and returns at most five.  Selected reads create
+\texttt{read\_by} edges carrying semantic, path-trust, and final scores.
+
+\paragraph{Update and revocation.}
+New observations and messages append records rather than mutating or
+superseding prior text.  An explicit revocation event updates the referenced
+source and directly referenced or already affected records.  Other descendants
+detect the revoked ancestor during later recursive trust evaluation; final
+graph propagation marks affected predecessors while retaining their lineage.
+A benchmark summary event creates a new record linked by
+\texttt{summarized\_from}.  There is no general
+\texttt{active}/\texttt{superseded}/\texttt{contradicted} state machine.
+
+\paragraph{Structured audit output.}
+The artifacts store selected and permission-filtered identifiers, component
+scores, affected ancestors and reasons, supporting identifiers, risk
+thresholds, and the final rule-specific decision.  MAP-Graph does not generate
+a free-form natural-language explanation, and the experiments do not measure
+human-facing explanation quality.
+
+\section{Benchmark Construction and Sanitization}
+\label{app:benchmark}
+
+\subsection{Full Benchmark}
+
+The controlled synthetic benchmark contains 2,700 tasks generated with seed
+42.  It has three equally sized domains---corporate workflow, software
+engineering, and research assistance---and six experiment groups:
+(1) clean utility, (2) poisoned-memory propagation, (3) private-memory
+leakage, (4) permission revocation, (5) action-risk sensitivity, and
+(6) clean compression/overhead.  Each domain contributes 150 tasks to each
+group.  Every domain--group cell contains 15 semantic families with 10
+variants that alter entities, audiences, channels, evidence shapes, and
+action types while retaining a structured oracle.  The 2,700 labels comprise
+960 \textsc{Allow}, 1,140 \textsc{Block}, 210 \textsc{Reverify}, and 390
+\textsc{Redact}.
+
+Each task provides source documents, initial and derived memory events, tool
+observations, visibility and permission fields, a four-role sequence, and a
+risk-labelled proposed action.  Corporate roles are manager, analyst,
+HR-assistant, and executor; software roles are planner, coder, reviewer, and
+executor; research roles are retriever, summarizer, writer, and verifier.  If
+the final structured action cannot be parsed, the harness recovers the public
+action type and risk from the task schema and uses the retrieved records as
+support.
+
+All eight methods receive the same task order and public task fields.  The
+runtime sanitizer removes the oracle decision, evaluator rationale,
+experiment and family identifiers, variant metadata, the top-level evaluator
+canary annotation, and every \texttt{should\_be\_used} annotation before
+either the agents or memory backend receive a task.  The public action type,
+risk, provenance, visibility, ownership, trust, and permission fields remain,
+because reasoning over them is the target capability.  Authorized source text
+also remains; otherwise canary exposure could not be measured.
+
+One run for each of B0--B6 and MAP-Graph produces 21,600 main-experiment
+decision logs.  Each method has complete 2,700/2,700 decision, trace, and
+memory-log coverage; graph artifacts are additionally present for the
+graph-producing methods.  The six ablations plus the full method produce
+18,900 additional decisions.  These are single-run controlled results.
+
+\subsection{Backbone Transfer Subset}
+\label{app:backbone-subset}
+
+The transfer experiment uses a fixed 540-task subset generated with seed 2027
+by jointly stratifying the full 2,700 tasks over domain, experiment group, and
+oracle label.  It contains 180 tasks per domain, 90 per experiment group, and
+all four labels.  The same task identifiers are used for B1, B4, B5, B6, and
+MAP-Graph under Qwen2.5-7B-Instruct, GLM-4-9B-0414, and
+Llama-3.1-8B-Instruct.  Qwen values are extracted from the final full runs;
+GLM and Llama are one subset run each.  Thus each backbone contributes
+$5\times540=2,700$ decisions.
+
+\subsection{Cluster Bootstrap}
+\label{app:bootstrap}
+
+The 95\% intervals use 2,000 bootstrap samples with bootstrap seed 42.  A sampling cluster is a
+semantic family within a domain and experiment group; all ten closely related
+variants in a sampled family move together.  The intervals therefore describe
+case-family variation in a fixed run, not model-inference nondeterminism.
+
+\section{Baseline Adaptations and Controls}
+\label{app:baselines}
+
+B3--B5 are benchmark adaptations that preserve the mechanisms stated below;
+they are not claimed as complete reproductions of their source systems.  B6
+is an internal flat-metadata control rather than an adaptation of an external
+paper.
+
+\smallskip
+\noindent\textbf{B0: No Memory.}
+The workflow retains only the current conversation and performs no persistent
+memory read or write.
+
+\smallskip
+\noindent\textbf{B1: Shared Vector Memory.}
+All agent records enter one shared Chroma collection; the five most similar
+records are returned without permission filtering, lineage scoring, or an
+action gate.
+
+\smallskip
+\noindent\textbf{B2: Isolated Vector Memory.}
+The same vector mechanism is maintained separately per agent.  This prevents
+direct cross-store reads but does not create a shared provenance graph.
+
+\smallskip
+\noindent\textbf{B3: Adapted G-Memory.}
+Observable interaction traces are converted into trajectories represented by
+query, interaction, and insight graphs.  The implementation performs one
+task-level retrieval and reuses its context for all four roles, applies
+one-hop query-graph expansion, retains the 512 most recent trajectories, and
+bounds insight state to 10 rules.  Periodic insight updates use an LLM.
+The reported configuration replaces the original per-task LLM trajectory
+sparsifier and generative reranker with deterministic key-step extraction and
+similarity ordering.  Auxiliary insight calls use temperature 0.1 with a
+small output cap.  B3 receives no MAP-Graph permission filter, path-trust
+propagation, or action gate.
+
+\smallskip
+\noindent\textbf{B4: Adapted Collaborative Memory.}
+Records are assigned to private or shared tiers from visibility and permission
+metadata.  Restricted or revoked status is inherited by derived messages, and
+the current access-control list is checked before top-five similarity results
+are returned.  A per-task user--agent--resource access graph is exported.
+B4 has neither recursive path-trust scoring nor an action-time gate.
+
+\smallskip
+\noindent\textbf{B5: Adapted MemLineage.}
+Each fragment records derivation ancestors, edges, and untrusted-source
+reasons.  Retrieval is similarity-based and does not filter by reader
+permission.  Before a high-risk action, supporting memories are checked for an
+untrusted ancestor.  The evaluated implementation has no per-principal
+signatures, cryptographic/Merkle-verified log, permission-aware retrieval, or
+multi-agent trust decay.
+
+\smallskip
+\noindent\textbf{B6: Flat Provenance.}
+B6 stores, on each memory, visibility, owner, permission scope, source trust,
+private/revoked/poisoned state, and action risk.  It performs direct
+metadata-based retrieval filtering and a metadata-based action check.
+Derived messages summarize metadata from their direct inputs, and revocation
+updates records directly tied to the source.  B6 does not construct a
+provenance graph, recursively traverse parent memories, or propagate
+path-trust scores.  It therefore isolates the value of recursive ancestry from
+the availability of local policy metadata.
+
+\section{Metrics and Implementation Settings}
+\label{app:metrics}
+
+\subsection{Paper-Facing Metrics}
+
+Let $y_i$ be the oracle decision, $\hat y_i$ the final decision,
+$\mathcal{I}=\{\textsc{Block},\textsc{Redact},\textsc{Reverify},
+\textsc{AskUser}\}$, and $N$ the relevant denominator.
+
+\begin{enumerate}
+\item \textbf{Exact decision accuracy (Acc, $\uparrow$):}
+$N^{-1}\sum_i\mathbf{1}[\hat y_i=y_i]$.
+\item \textbf{Task success rate (TSR, $\uparrow$):}
+an oracle-\textsc{Allow} case succeeds only for \textsc{Allow}; a
+non-\textsc{Allow} case succeeds for any decision in $\mathcal{I}$.  Thus a
+safe but non-exact intervention can increase TSR without increasing Acc.
+\item \textbf{Clean success (Clean, $\uparrow$):}
+the \textsc{Allow} rate on Exp-1 and Exp-6, whose oracle decision is
+\textsc{Allow}.
+\item \textbf{Unsafe rate ($\downarrow$):}
+the fraction of all 2,700 tasks with a simulated execution event when the
+oracle decision is not \textsc{Allow}.
+\item \textbf{Attack success rate (ASR, $\downarrow$):}
+the \textsc{Allow}/execution rate among the 450 Exp-2 poisoned-memory tasks.
+\item \textbf{Leakage ($\downarrow$):}
+the fraction of the 450 Exp-3 tasks with unauthorized canary exposure or a
+final \textsc{Allow}.
+\item \textbf{Unauthorized access (UAcc, $\downarrow$):}
+the total successful unauthorized memory reads divided by total observed
+unauthorized-read attempts.  It is N/A when no attempt is observed.
+\item \textbf{Revocation violation ($\downarrow$):}
+the final-\textsc{Allow} rate among the 450 Exp-4 permission-revocation tasks.
+\item \textbf{Structural contamination:}
+for each Exp-2 task having at least one downstream memory, the fraction of
+downstream records that retain poisoned ancestry, averaged across eligible
+tasks.  This is a lineage-structure diagnostic, not an execution or leakage
+rate: a system may preserve affected ancestry for audit while preventing its
+use.
+\item \textbf{Correct block ($\uparrow$):}
+$\Pr(\hat y=\textsc{Block}\mid y=\textsc{Block})$.
+\item \textbf{False block ($\downarrow$):}
+$\Pr(\hat y=\textsc{Block}\mid y=\textsc{Allow})$.
+\end{enumerate}
+
+The additional \emph{block rate} is the unconditional fraction of final
+\textsc{Block} decisions.  Per-task token use sums provider-reported prompt
+and completion tokens over the four outer agent calls and any recorded
+memory-layer calls.  The token-cap diagnostic is the fraction of the 10,800
+outer agent calls per method whose reported completion reaches the 2,048-token
+limit.  Average graph nodes and edges are computed from exported task graphs.
+
+\subsection{Fixed Implementation Settings}
+\label{app:settings}
+
+All main-experiment methods use the same AutoGen OpenAI-compatible client with
+Qwen2.5-7B-Instruct, outer-call temperature 0, one four-role round, at most 12
+recent context messages, at most five retrieved memories, a 2,048-token
+generation cap, a 120-second per-call timeout, and at most five retries.
+Embedding methods use normalized BAAI/bge-small-en-v1.5 embeddings on CPU
+with $k=5$.
+
+MAP-Graph filters permissions before ranking, uses multiplicative path trust,
+propagates affected state, and evaluates retrieved plus contextual support at
+action time.  Its thresholds are 0.30 for answers, 0.60 for low- or
+medium-risk non-answer actions, and 0.85 for high-risk actions.  A high-risk
+action is blocked when an affected supporting path is detected.
+
+Latency is not a paper-facing metric.  All model calls used remote shared
+endpoints and experiments ran concurrently across accounts, so provider
+queuing and long-tail service load cannot be separated from local memory
+overhead.  Token use and graph size are retained only as reproducible
+diagnostics.
+
+\section{Additional Results}
+\label{app:additional-results}
+
+Tables~\ref{tab:scenario-results}--\ref{tab:backbone-uacc} report the
+scenario, domain, full-run, ablation, and transfer diagnostics discussed in
+this section.
+
+\begin{table*}[!t]
+\centering
+\small
+\caption{Scenario-level results (percent; 450 tasks per row).  ``Best
+baseline'' is selected for the quantity shown within that experiment group.}
+\label{tab:scenario-results}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llrrlrr}
+\toprule
+Group & Scenario & MAP TSR & Best baseline TSR & Risk/utility quantity & MAP & Best baseline \\
+\midrule
+Exp-1 & Clean utility             & 84.22 & 83.33 (B1) & Exact accuracy & 84.22 & 83.33 (B1) \\
+Exp-2 & Poisoned propagation      & 100.00 & 77.78 (B5) & ASR            & 0.00  & 22.22 (B5) \\
+Exp-3 & Private-memory leakage    & 100.00 & 82.00 (B2) & Leakage        & 0.00  & 18.00 (B2) \\
+Exp-4 & Permission revocation     & 100.00 & 76.22 (B5) & Revocation     & 0.00  & 23.78 (B5) \\
+Exp-5 & Action-risk sensitivity   & 89.33 & 68.22 (B6) & Unsafe action  & 9.11  & 28.67 (B6) \\
+Exp-6 & Clean compression         & 96.22 & 94.44 (B4) & Exact accuracy & 96.22 & 94.44 (B4) \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[!t]
+\centering
+\normalsize
+\caption{MAP-Graph results by domain (percent; 900 tasks per row).}
+\label{tab:domain-results}
+\setlength{\tabcolsep}{8pt}
+\renewcommand{\arraystretch}{1.10}
+\begin{tabular}{lrr}
+\toprule
+Domain & TSR & Acc \\
+\midrule
+Corporate workflow & 94.56 & 73.56 \\
+Software engineering & 95.00 & 74.56 \\
+Research assistance & 95.33 & 70.00 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[!t]
+\centering
+\small
+\caption{Additional full-run diagnostics (percent except tokens/task).
+Correct and false block use their conditional denominators; Cap calls is the
+fraction of outer calls reaching 2,048 completion tokens.}
+\label{tab:main-diagnostics}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Block & Correct block & False block & Structural contam. & Tokens/task & Cap calls \\
+\midrule
+B0 & 12.67 & 16.23 & 2.50 & 0.00 & 3,397.2 & 8.12 \\
+B1 & 14.41 & 15.44 & 3.33 & 43.44 & 5,007.5 & 4.66 \\
+B2 & 14.07 & 16.67 & 2.71 & 25.00 & 4,054.4 & 4.06 \\
+B3 & 9.07 & 8.77 & 3.23 & 11.11 & 6,687.4 & 9.08 \\
+B4 & 15.37 & 17.46 & 2.71 & 25.02 & 4,927.8 & 4.46 \\
+B5 & 23.96 & 38.86 & 2.81 & 62.17 & 4,953.2 & 4.09 \\
+B6 & 16.59 & 21.23 & 2.60 & 25.00 & 4,882.7 & 4.44 \\
+MAP-Graph & 24.00 & 54.21 & 3.12 & 25.00 & 4,814.9 & 3.89 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Scenario-Level Results}
+\label{app:scenario-results}
+
+Table~\ref{tab:scenario-results} compares MAP-Graph with the strongest baseline
+for the utility and risk quantity relevant to each experiment group.  The
+comparator can differ across groups.
+
+\subsection{Confidence Intervals and Domain Results}
+\label{app:confidence-domain}
+
+MAP-Graph's TSR is 94.96\% with a 95\% cluster-bootstrap interval of
+[93.15, 96.52], and its Acc is 72.70\% [68.26, 77.19].  The strongest
+baseline TSR is B6 at 74.67\% [71.67, 77.74]; the strongest baseline Acc is B5
+at 51.07\% [47.19, 55.07].  MAP-Graph's Clean is 90.22\%
+[87.44, 92.92], and its unsafe rate is 1.52\% [0.37, 2.93].  These intervals
+measure clustered case variation within one run.
+Table~\ref{tab:domain-results} reports the corresponding domain breakdown.
+The TSR range is narrow across the three controlled role configurations.  The
+lower research Acc with high TSR reflects more safe but non-exact
+interventions, not more impermissible execution.
+
+\subsection{Main-Experiment Diagnostics}
+\label{app:main-diagnostics}
+
+Table~\ref{tab:main-diagnostics} reports block rates, structural
+contamination, and token diagnostics for the full run.
+MAP-Graph's average token count consists of 4,194.8 prompt and 620.1
+completion tokens.  B3 is highest because retrieved trajectories and periodic
+insight generation add context and auxiliary generation.  MAP-Graph exports
+39.74 nodes and 246.78 edges per task on average.  These counts exclude
+embedding computation, graph construction time, storage I/O, evaluator work,
+and failed requests for which the provider reports no usage; they are not a
+complete cost or latency comparison.
+
+Structural contamination must be interpreted separately from safety outcomes.
+MAP-Graph's 25.00\% means that affected ancestry remains attached to some
+downstream records; those records are retained and marked for audit.  Its
+0\% ASR and 0\% poisoned-group impermissible execution show that retained
+lineage was not treated as admissible support in those cases.
+
+\subsection{Full Ablation Diagnostics}
+\label{app:ablation-diagnostics}
+
+Table~\ref{tab:ablation-diagnostics} supplements the main-paper ablation
+table with leakage, contamination, block, token, and graph-size diagnostics.
+The six variants correspond to explicit component switches.  \emph{No
+permission filter} disables candidate exclusion but leaves trust and gating
+active; its 100\% UAcc in the main table despite 0\% endpoint leakage here
+shows why read-boundary and endpoint metrics are both needed.  \emph{No trust
+propagation} also disables trust-aware reranking.  \emph{No action gate}
+allows at the backend decision stage, while \emph{No containment} retains the
+threshold gate but removes affected-path rules.  \emph{No provenance graph}
+jointly disables graph construction, permission filtering, trust propagation
+and reranking, action gating, containment, and contextual action support; it
+is a system-level removal rather than a one-switch attribution.  The
+\emph{compressed graph} retains policy behavior but exports fewer graph
+details.
+
+\begin{table*}[!t]
+\centering
+\small
+\caption{Diagnostics supplementing the main-paper ablation table (percent
+except tokens and graph size).  CBlock/FBlock denote conditional correct/false
+block.}
+\label{tab:ablation-diagnostics}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+Variant & Leak & Contam. & Block & CBlock & FBlock & Tokens & Nodes & Edges \\
+\midrule
+Full & 0.00 & 25.00 & 24.00 & 54.21 & 3.12 & 4,814.9 & 39.74 & 246.78 \\
+Compressed graph & 0.00 & 25.02 & 23.78 & 53.77 & 3.02 & 4,847.0 & 24.66 & 70.68 \\
+No action gate & 22.22 & 25.00 & 14.41 & 17.54 & 2.50 & 4,830.1 & 39.74 & 246.69 \\
+No containment & 20.89 & 25.00 & 14.81 & 18.33 & 2.50 & 4,814.2 & 39.68 & 245.96 \\
+No permission filter & 0.00 & 24.94 & 25.74 & 58.86 & 2.40 & 4,911.9 & 39.76 & 250.73 \\
+No provenance graph & 22.89 & 40.44 & 14.22 & 16.40 & 3.02 & 4,991.2 & 0.00 & 0.00 \\
+No trust propagation & 0.00 & 25.00 & 11.15 & 24.12 & 2.71 & 4,886.3 & 39.91 & 265.10 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[!t]
+\centering
+\small
+\caption{Unauthorized-access diagnostics on the common 540-task transfer
+subset.  Each backbone block reports unauthorized reads (R), observed attempts
+(A), and conditional UAcc in percent.}
+\label{tab:backbone-uacc}
+\setlength{\tabcolsep}{3.8pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}lrrr rrr rrr@{}}
+\toprule
+& \multicolumn{3}{c}{Qwen2.5-7B} & \multicolumn{3}{c}{GLM-4-9B} &
+\multicolumn{3}{c}{Llama-3.1-8B} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(l){8-10}
+Method & R & A & UAcc & R & A & UAcc & R & A & UAcc \\
+\midrule
+B1        & 48  & 48    & 100.00 & 48  & 48    & 100.00 & 48  & 48    & 100.00 \\
+B4        & 990 & 2,323 & 42.62  & 990 & 2,324 & 42.60  & 990 & 2,324 & 42.60 \\
+B5        & 101 & 101   & 100.00 & 86  & 86    & 100.00 & 84  & 84    & 100.00 \\
+B6        & 990 & 2,324 & 42.60  & 990 & 2,324 & 42.60  & 990 & 2,324 & 42.60 \\
+MAP-Graph & 0   & 1,334 & 0.00   & 0   & 1,334 & 0.00   & 0   & 1,334 & 0.00 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Backbone Access-Boundary Diagnostics}
+\label{app:backbone-boundary}
+
+Table~\ref{tab:backbone-uacc} reports unauthorized-access diagnostics on the
+common 540-task transfer subset.
+The deterministic access policy and task structure make the attempt counts
+largely stable across backbones, while B5's model-dependent retrieval changes
+how often an unauthorized record is selected.  MAP-Graph rejects every
+observed unauthorized read under all three backbones.  This supports transfer
+of the implemented access boundary, not a claim of run-to-run stability or
+deployment-scale robustness.
+
+\subsection{Error Analysis}
+\label{app:error-analysis}
+
+MAP-Graph makes 737 exact-decision errors.  Of these, 601 are safe but
+non-exact interventions, such as \textsc{Redact} rather than \textsc{Block} or
+\textsc{Reverify}; this accounts for much of the TSR--Acc gap.  Another 95
+cases are unnecessary interventions on oracle-\textsc{Allow} tasks.  The
+remaining 41 are impermissible \textsc{Allow} decisions, all in Exp-5.  The
+residual safety errors in this run therefore concentrate in action-risk
+sensitivity rather than poisoned, private, or revoked-memory groups.
+
+\end{document}
